@@ -106,7 +106,6 @@ const App = () => {
       };
       setThreads([newThread]);
       setCurrentThread(newThread);
-      unlockAchievement('first_message');
     }
   };
 
@@ -142,30 +141,53 @@ const App = () => {
 
   // Unlock achievement
   const unlockAchievement = (achievementId) => {
-    const updated = achievements.map((a) =>
-      a.id === achievementId ? { ...a, unlocked: true } : a
+    setAchievements((prevAchievements) =>
+      prevAchievements.map((a) =>
+        a.id === achievementId ? { ...a, unlocked: true } : a
+      )
     );
-    setAchievements(updated);
   };
 
   // Generate ASCII art
   const generateAsciiArt = () => {
+    if(!currentThread) return;
+
     const arts = [
       '　　　　　 ∧_∧\n　　　　　( ´∀`)\n　　　　　(　つ つ\n　　　　　｜ ｜ ｜\n　　　　　(＿)＿)',
       '　　　　　  ／＠＠＼\n　　　　　（　´・ω・`）\n　　　　　／つ⊂　 ＼\n　　　　　｜　　　　　｜\n　　　　　｜　　　　　｜',
       '　　∧_∧　\n　　(´・ω・`)　ﾀﾀﾀｯ\n　　⊃━⊃\n　　　く',
     ];
-
     const random = arts[Math.floor(Math.random() * arts.length)];
-    setAsciiArt(random);
-    setShowAsciiArt(true);
 
-    const totalAscii = currentThread?.messages.filter((m) => m.isAsciiArt).length || 0;
+    // AAを「メッセージ」オブジェクトとして作成
+    const newAaMessage = {
+      id: Date.now(),
+      userId: currentUser.id,
+      text: random,
+      timestamp: Date.now(),
+      isAsciiArt: true, // 実績判定用のフラグ
+    };
+
+    // 現在のスレッドにAAメッセージを追加
+    const updatedThread = {
+      ...currentThread,
+      messages: [...currentThread.messages, newAaMessage],
+    };
+
+    // Stateの更新
+    setCurrentThread(updatedThread);
+    setThreads((prevThreads) =>
+      prevThreads.map((t) => (t.id === currentThread.id ? updatedThread : t))
+    );
+
+    // 4. AA実績のカウントと判定（最新のメッセージから件数を数える）
+    const totalAscii = updatedThread.messages.filter((m) => m.isAsciiArt).length;
     if (totalAscii >= 5) {
       unlockAchievement('ascii_artist');
     }
 
-    setTimeout(() => setShowAsciiArt(false), 3000);
+    // 初投稿実績もついでにケア
+    unlockAchievement('first_message');
   };
 
   // Handle message send
@@ -179,61 +201,72 @@ const App = () => {
       timestamp: Date.now(),
     };
 
-    const updatedThread = {
-      ...currentThread,
-      messages: [...currentThread.messages, newMessage],
-    };
-
-    // Check for chikuwa
-    if (messageInput.includes('なんだ今の') && cpuMessages.includes('ちくわ大明神')) {
-      unlockAchievement('chikuwa_unlocked');
-      setCpuMessages([]);
-    }
-    if(messageInput.includes('ちくわ大明神')) {
-      setCpuMessages(['ちくわ大明神']);
-      setTimeout(() => {
-        if (isMounted.current) {
-          setCpuMessages(['...？']);
-        }
-      }, 500);
+    let updatedMessages = [...currentThread.messages, newMessage];
+    //影のCPU
+    let shadowCpuTriggered = false;
+    let shadowCpuMsg = null;
+    if(Math.random() < 0.01){
+      shadowCpuTriggered = true;
+      shadowCpuMsg = {
+        id: Date.now() + 1,
+        userId: 'ちくわ大明神',
+        text: 'ちくわ大明神',
+        timestamp: Date.now() + 1,
+      };
     }
 
-    // Random CPU message
+// --- 🏆 「ちくわ大明神」の実績解除判定 ---
+    // 今回送信した文字が「誰だ今の」であり、かつ、直前の書き込み（配列の最後）が
+    // 影のCPU（shadow_cpu）による「ちくわ大明神」だった場合、実績を解除！
+    if (messageInput.includes('誰だ今の')) {
+      const lastMessage = currentThread.messages[currentThread.messages.length - 1];
+      if (lastMessage && lastMessage.userId === 'shadow_cpu' && lastMessage.text === 'ちくわ大明神') {
+        unlockAchievement('chikuwa_unlocked');
+      }
+    }
+
+    // 影のCPUが発動していたら、配列の末尾に「ちくわ大明神」を追記
+    if (shadowCpuTriggered && shadowCpuMsg) {
+      updatedMessages.push(shadowCpuMsg);
+    }
+
+    // --- 🤖 通常の「CPU野郎」のランダム野次馬処理 ---
+    // （こちらは既存の仕様通り15%の確率で、少し遅れて発言）
     if (Math.random() < 0.15) {
       const randomLine = cpuLines[Math.floor(Math.random() * cpuLines.length)];
       setTimeout(() => {
-
-        if(!isMounted.current) return; //アンマウント時は処理しない
+        if (!isMounted.current) return;
         const cpuMsg = {
-          id: Date.now() + 1,
+          id: Date.now() + 10,
           userId: 'cpu',
           text: randomLine,
-          timestamp: Date.now() + 1,
+          timestamp: Date.now() + 10,
         };
 
-        setCurrentThread((prev) => 
-        prev ? {...prev, messages: [...prev.messages, cpuMsg]} : prev);
+        setCurrentThread((prev) =>
+          prev ? { ...prev, messages: [...prev.messages, cpuMsg] } : prev
+        );
         setThreads((prevThreads) =>
           prevThreads.map((t) =>
-            t.id === updatedThread.id
+            t.id === currentThread.id
               ? { ...t, messages: [...t.messages, cpuMsg] }
               : t
-          ) 
+          )
         );
       }, 800);
     }
 
+    // スレッドの状態を確定させて反映
+    const updatedThread = {
+      ...currentThread,
+      messages: updatedMessages,
+    };
+
     setCurrentThread(updatedThread);
-    setThreads((prevThreads) => 
-    prevThreads.map((t) => (t.id === updatedThread.id ? updatedThread : t))
+    setThreads((prevThreads) =>
+      prevThreads.map((t) => (t.id === currentThread.id ? updatedThread : t))
     );
     setMessageInput('');
-
-    if(updatedThread.messages.length >= 100){
-      unlockAchievement('chatty');
-    }
-
-    unlockAchievement('first_message');
   };
 
   if (!currentUser) {
@@ -440,7 +473,7 @@ const App = () => {
           </button>
         </div>
       </div>
-            
+
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         {currentThread ? (
